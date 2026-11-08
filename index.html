@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight Path Visualiser</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: #0b0f14; color: #e6edf3; }
+    #app { display: flex; height: 100vh; width: 100vw; }
+    #panel {
+      width: 400px; min-width: 400px; padding: 16px;
+      display: flex; flex-direction: column; gap: 10px;
+      background: #0f1620; border-right: 1px solid #22304a;
+      transition: margin-left .2s ease;
+    }
+    #panel.collapsed { margin-left: -400px; }
+    #globe { flex: 1; min-width: 0; }
+    header { display: flex; align-items: center; gap: 8px; }
+    h1 { font-size: 18px; margin: 0; flex: 1; }
+    form { display: flex; flex-direction: column; gap: 8px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9db2c8; }
+    input, select, button { padding: 8px 10px; border-radius: 6px; border: 1px solid #2a3b52; background: #0b1220; color: inherit; font: inherit; }
+    input:focus, select:focus { outline: none; border-color: #4d9fff; }
+    button { background: #1f6feb; border: none; cursor: pointer; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: default; }
+    button.secondary { background: #1b2739; border: 1px solid #2a3b52; }
+    #toggle-panel { display: none; padding: 4px 8px; font-size: 16px; line-height: 1; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    #status { font-size: 12px; color: #9db2c8; min-height: 1.2em; }
+    .spinner {
+      display: none; width: 11px; height: 11px; margin-right: 6px;
+      border: 2px solid #35507a; border-top-color: #4d9fff; border-radius: 50%;
+      animation: spin .7s linear infinite; vertical-align: -1px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #results { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .card { background: #16202e; border: 1px solid #22304a; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+    .card:hover { border-color: #35507a; }
+    .card.selected { border-color: #4d9fff; }
+    .card-head { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+    .km { margin-left: auto; color: #9db2c8; font-size: 12px; }
+    .detour { font-size: 11px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+    .detour.good { color: #06d6a0; background: rgba(6, 214, 160, .12); }
+    .detour.warn { color: #ffd166; background: rgba(255, 209, 102, .12); }
+    .detour.bad  { color: #ef476f; background: rgba(239, 71, 111, .12); }
+    .copy { padding: 2px 6px; font-size: 12px; background: transparent; border: 1px solid #2a3b52; line-height: 1; }
+    .copy:hover { border-color: #4d9fff; }
+    .leg { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 12px; }
+    .codes { font-weight: 600; white-space: nowrap; }
+    .al { color: #9db2c8; text-align: right; }
+    .al-summary { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #22304a; font-size: 11px; color: #7d94ad; }
+    .muted { color: #9db2c8; font-size: 12px; }
+    .datanote, footer { font-size: 11px; color: #627084; }
+    .datanote { padding: 8px; border-radius: 6px; background: #0b1220; border: 1px solid #22304a; }
+    .datanote b { color: #9db2c8; }
+
+    /* autocomplete */
+    .ac-wrap { position: relative; }
+    .ac-list {
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+      margin: 2px 0 0; padding: 4px; list-style: none; display: none;
+      background: #0b1220; border: 1px solid #2a3b52; border-radius: 6px;
+      max-height: 220px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    }
+    .ac-list li { padding: 6px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ac-list li.active, .ac-list li:hover { background: #1f6feb; }
+
+    /* responsive: stack panel above globe on small screens */
+    @media (max-width: 820px) {
+      #app { flex-direction: column; }
+      #panel { width: 100%; min-width: 0; height: 46vh; border-right: none; border-bottom: 1px solid #22304a; }
+      #panel.collapsed { margin-left: 0; height: auto; }
+      #panel.collapsed form, #panel.collapsed #status, #panel.collapsed #results,
+      #panel.collapsed .datanote, #panel.collapsed footer { display: none; }
+      #toggle-panel { display: inline-block; }
+      #globe { height: 54vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <header>
+        <h1>✈ Flight Path Visualiser</h1>
+        <button id="toggle-panel" type="button" title="Toggle panel" aria-label="Toggle panel">☰</button>
+      </header>
+      <form id="search">
+        <label>Origin
+          <div class="ac-wrap">
+            <input id="from" placeholder="DUB — Dublin Airport, Dublin, IE" autocomplete="off">
+          </div>
+        </label>
+        <label>Destination
+          <div class="ac-wrap">
+            <input id="to" placeholder="NRT — Narita International, Tokyo, JP" autocomplete="off">
+          </div>
+        </label>
+        <div class="row">
+          <label>Max stops
+            <select id="stops">
+              <option value="any" selected>Any (up to 2)</option>
+              <option value="1">Up to 1 stop</option>
+              <option value="0">Direct only</option>
+            </select>
+          </label>
+          <label>Alliance
+            <select id="alliance"></select>
+          </label>
+        </div>
+        <label>Airline (optional)
+          <div class="ac-wrap">
+            <input id="airline" placeholder="e.g. LH — Lufthansa" autocomplete="off">
+          </div>
+        </label>
+        <div class="row">
+          <button id="go" type="submit" disabled>Find routes</button>
+          <button id="share" type="button" class="secondary" title="Copy link to this search" disabled>🔗 Copy link</button>
+        </div>
+      </form>
+      <div id="status"><span id="spinner" class="spinner"></span><span id="status-text"></span></div>
+      <div id="results"></div>
+      <div class="datanote">
+        <b>Route data:</b> OpenFlights (~2017, ODbL) · <b>Airports:</b> OurAirports.
+        Shows scheduled route segments and great-circle geometry — not live flights or
+        bookable itineraries. See README for fresher-data options.
+      </div>
+      <footer>Alliance membership is approximate (~2017). Search results update the URL so you can share them.</footer>
+    </aside>
+    <div id="globe"></div>
+  </div>
+  <script src="https://unpkg.com/globe.gl"></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
